@@ -21,7 +21,8 @@ include_directories(
 add_definitions(-DEI_PORTING_ANDROID=1)
 
 # Find all Edge Impulse SDK sources except the porting directory (to avoid platform conflicts)
-file(GLOB_RECURSE EI_SDK_SOURCES
+# Added CONFIGURE_DEPENDS to ensure CMake refreshes when files are added/removed
+file(GLOB_RECURSE EI_SDK_SOURCES CONFIGURE_DEPENDS
     "${EI_DIR}/edge-impulse-sdk/classifier/*.cpp"
     "${EI_DIR}/edge-impulse-sdk/classifier/*.c"
     "${EI_DIR}/edge-impulse-sdk/dsp/*.cpp"
