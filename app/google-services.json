@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "570779238192",
+    "project_id": "ruker-a0f8ebc7",
+    "storage_bucket": "ruker-a0f8ebc7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:570779238192:android:c490adf728d1e4a0e392f5",
+        "android_client_info": {
+          "package_name": "com.example.ruker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfyqU_KNWlHMPDu_mEnXtFkL5geJ0uKEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

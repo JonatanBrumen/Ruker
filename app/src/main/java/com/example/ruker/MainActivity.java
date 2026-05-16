@@ -14,7 +14,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -34,12 +36,18 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.material.button.MaterialButton;
+import com.google.firebase.Timestamp;
+import com.google.firebase.firestore.FirebaseFirestore;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -58,19 +66,22 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private static final int SAMPLES_PER_FRAME = 3;
     private final float[] inputBuffer = new float[RAW_SAMPLE_COUNT * SAMPLES_PER_FRAME];
     
-    // Background executor for inference to keep UI smooth
     private final ExecutorService inferenceExecutor = Executors.newSingleThreadExecutor();
     private int inferenceCounter = 0;
-    private static final int INFERENCE_INTERVAL_SAMPLES = 8; // Run inference every ~128ms
+    private static final int INFERENCE_INTERVAL_SAMPLES = 8; 
 
     private TextView statusText;
     private TextView timerText;
     private MaterialButton recordButton;
     private volatile int lastClassificationColor = Color.GRAY;
-
-
-    //time
+    private volatile String lastClassificationLabel = "Idle";
+    
+    private FirebaseFirestore db;
     private boolean isRecording = false;
+    private String currentRunId;
+    private Timestamp startTimestamp;
+    private final List<Map<String, Object>> currentRunPath = new ArrayList<>();
+    
     private long startTime = 0L;
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
     private final Runnable timerRunnable = new Runnable() {
@@ -98,7 +109,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
-    private static final int SMOOTHING_WINDOW_SIZE = 3; // Reduced for faster transitions
+    private static final int SMOOTHING_WINDOW_SIZE = 3; 
     private final LinkedList<Terrain> recentTerrains = new LinkedList<>();
 
     @Override
@@ -109,6 +120,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         statusText = findViewById(R.id.statusText);
         timerText = findViewById(R.id.timerText);
         recordButton = findViewById(R.id.recordButton);
+
+        db = FirebaseFirestore.getInstance();
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
@@ -168,11 +181,15 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         recordButton.setEnabled(true);
         recordButton.setText("Stop Recording");
         startTime = SystemClock.uptimeMillis();
+        startTimestamp = Timestamp.now();
+        currentRunId = UUID.randomUUID().toString();
         timerHandler.postDelayed(timerRunnable, 0);
         
         Arrays.fill(inputBuffer, 0);
         inferenceCounter = 0;
         recentTerrains.clear();
+        currentRunPath.clear();
+        
         if (mMap != null) mMap.clear();
     }
 
@@ -182,6 +199,27 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         recordButton.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#388E3C")));
         recordButton.setText("Start Recording");
         timerText.setText("00:00");
+
+        uploadRunToFirebase();
+    }
+
+    private void uploadRunToFirebase() {
+        if (currentRunPath.isEmpty()) {
+            Toast.makeText(this, "No valid data to save.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Map<String, Object> runData = new HashMap<>();
+        runData.put("run_id", currentRunId);
+        runData.put("start_time", startTimestamp);
+        runData.put("path", new ArrayList<>(currentRunPath));
+
+        db.collection("recorded_paths")
+                .add(runData)
+                .addOnSuccessListener(documentReference -> 
+                    Toast.makeText(MainActivity.this, "Path synced to Firebase!", Toast.LENGTH_SHORT).show())
+                .addOnFailureListener(e -> 
+                    Log.e("Firebase", "Error saving run", e));
     }
 
     private void setupLocationUpdates() {
@@ -202,6 +240,15 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                                 .color(lastClassificationColor)
                                 .width(15));
                         mMap.animateCamera(CameraUpdateFactory.newLatLng(currentLatLng));
+
+                        if (!"Idle".equals(lastClassificationLabel)) {
+                            Map<String, Object> point = new HashMap<>();
+                            point.put("latitude", location.getLatitude());
+                            point.put("longitude", location.getLongitude());
+                            point.put("terrain_type", lastClassificationLabel);
+                            point.put("timestamp", Timestamp.now());
+                            currentRunPath.add(point);
+                        }
                     }
                     lastLatLng = currentLatLng;
                 }
@@ -212,22 +259,43 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     public void onMapReady(@NonNull GoogleMap googleMap) {
         mMap = googleMap;
+        mMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+        
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
             return;
         }
-        mMap.setMyLocationEnabled(true);
-        startLocationUpdates();
+        
+        enableMapFeatures();
+    }
+
+    private void enableMapFeatures() {
+        if (mMap != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            mMap.setMyLocationEnabled(true);
+            mMap.getUiSettings().setMyLocationButtonEnabled(true);
+            startLocationUpdates();
+        }
     }
 
     private void startLocationUpdates() {
-        // High resolution: 500ms intervals
         LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500)
                 .setMinUpdateIntervalMillis(250)
                 .build();
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null);
+            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 1) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                enableMapFeatures();
+            } else {
+                Toast.makeText(this, "Permission denied.", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -242,7 +310,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
             inferenceCounter++;
             if (inferenceCounter >= INFERENCE_INTERVAL_SAMPLES) {
-                // Copy buffer and run inference in background
                 final float[] bufferCopy = inputBuffer.clone();
                 inferenceExecutor.execute(() -> runInference(bufferCopy));
                 inferenceCounter = 0;
@@ -264,7 +331,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
             Terrain detected;
             switch (maxIdx) {
-                case 0: detected = Terrain.IDLE; break;
                 case 1: detected = Terrain.SMOOTH; break;
                 case 2: detected = Terrain.TOUGH; break;
                 default: detected = Terrain.IDLE;
@@ -277,10 +343,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 }
                 Terrain smoothedTerrain = getMostFrequent(recentTerrains);
                 lastClassificationColor = smoothedTerrain.color;
-                
+                lastClassificationLabel = smoothedTerrain.label;
                 final String label = smoothedTerrain.label;
                 final float confidence = maxVal;
-                runOnUiThread(() -> statusText.setText(String.format(Locale.US, "%s %.2f", label, confidence)));
+                runOnUiThread(() -> statusText.setText(String.format(Locale.US, "%s %.2", label, confidence)));
             }
         }
     }
