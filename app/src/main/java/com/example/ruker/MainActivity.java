@@ -68,6 +68,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private MaterialButton recordButton;
     private volatile int lastClassificationColor = Color.GRAY;
 
+
+    //time
     private boolean isRecording = false;
     private long startTime = 0L;
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
