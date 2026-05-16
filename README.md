@@ -1,1 +1,1 @@
-Osnove aplikacije za prikaz dostopnosti na zemljevidu za vozičke. Prikazuje koliko trese ko se peljejo in če se da tudi šteje potiske.
+Android application that tracks terrain for wheelchair users. Uses edge impulse for creating a machine learning model for surface classification that users capture when they are moving around. Users must manually start tracking.
